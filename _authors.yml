@@ -1,0 +1,140 @@
+authors:
+  - name: Lorin Adams
+    affiliations:
+      - ref: wic
+    corresponding: false
+    equal-contributor: true
+
+  - name: Phoebe Stevenson-Leggett
+    affiliations:
+      - ref: csu
+    corresponding: false
+    equal-contributor: true
+
+  - name: Jia Le Lee
+    affiliations:
+      - ref: babraham
+    corresponding: false
+    equal-contributor: false
+
+  - name: James Bazire
+    affiliations:
+      - ref: csu
+    corresponding: false
+    equal-contributor: false
+
+  - name: Giulia Dowgier
+    affiliations:
+      - ref: csu
+    corresponding: false
+    equal-contributor: false
+
+  - name: Agnieszka Hobbs
+    affiliations:
+      - ref: csu
+    corresponding: false
+    equal-contributor: false
+
+  - name: Chloë Roustan
+    affiliations:
+      - ref: crick
+    corresponding: false
+    equal-contributor: false
+
+  - name: Annabel Borg
+    affiliations:
+      - ref: crick
+    corresponding: false
+    equal-contributor: false
+
+  - name: Christine Carr
+    affiliations:
+      - ref: wic
+    corresponding: false
+    equal-contributor: false
+
+  - name: Silvia Innocentin
+    affiliations:
+      - ref: babraham
+    corresponding: false
+    equal-contributor: false
+
+  - name: Louise MC Webb
+    affiliations:
+      - ref: babraham
+    corresponding: false
+    equal-contributor: false
+
+  - name: Callie Smith
+    affiliations:
+      - ref: crick
+    corresponding: false
+    equal-contributor: false
+
+  - name: Philip Bawumia
+    affiliations:
+      - ref: crick
+    corresponding: false
+    equal-contributor: false
+
+  - name: Nicola Lewis
+    affiliations:
+      - ref: wic
+    corresponding: false
+    equal-contributor: false
+
+  - name: Nicola O'Reilly
+    affiliations:
+      - ref: crick
+    corresponding: false
+    equal-contributor: false
+
+  - name: Svend Kjaer
+    affiliations:
+      - ref: crick
+    corresponding: false
+    equal-contributor: false
+
+  - name: Michelle A Linterman
+    affiliations:
+      - ref: babraham
+    corresponding: false
+    equal-contributor: false
+
+  - name: Ruth Harvey
+    affiliations:
+      - ref: wic
+    corresponding: true
+    equal-contributor: true
+
+  - name: Mary Y Wu
+    affiliations:
+      - ref: csu
+    corresponding: true
+    equal-contributor: true
+
+  - name: Edward J Carr
+    affiliations:
+      - ref: crick
+      - ref: ucl-cak
+    corresponding: true
+    email: edward.carr@ucl.ac.uk
+    orcid: 0000-0001-9343-4593
+    equal-contributor: true
+
+affiliations:
+
+  - id: wic
+    name: Worldwide Influenza Centre, The Francis Crick Institute, 1 Midland Road, London NW1 1AT, UK
+  - id: csu
+    name: COVID Surveillance Unit, The Francis Crick Institute, 1 Midland Road, London NW1 1AT, UK
+  - id: babraham
+    name: Immunology Program, Babraham Institute, Cambridge, UK
+  - id: crick
+    name: The Francis Crick Institute, 1 Midland Road, London NW1 1AT, UK
+  - id: ucl-cak
+    name: UCL Centre for Kidney & Bladder Health, Royal Free Hospital, Rowland Hill Street, London NW3 2PF, UK
+
+
+filters:
+  - authors-block

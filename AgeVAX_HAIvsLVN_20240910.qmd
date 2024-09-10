@@ -1,0 +1,1438 @@
+---
+title: "Improved resolution of influenza vaccination responses with high-throughput live virus microneutralisation"
+short-title: "influenza HAI vs HTS"
+editor: visual
+format: 
+  docx:
+    reference-doc: custom-reference-doc.docx
+    toc: false
+    number-sections: true
+    shift-heading-level-by: -1
+    toc-title: Contents
+    fig-width: 7.5
+    fig-height: 7
+    execute:
+     echo: false
+     warning: false
+include-in-header: 
+  text: |
+        \usepackage{caption}
+        \usepackage{mdframed}
+metadata-files:
+  - _authors.yml
+bibliography: references.bib
+csl: vancouver.csl
+knitr: 
+  opts_chunk:
+    dev: ragg_png
+    dpi: 900
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+#| echo: false
+#| eval: true
+#| label: wordstats
+#| warning: false
+#| message: false
+
+qmd.fl <- list.files(pattern = 
+                       ## a date stamped qmd ##
+                       "20.*.qmd$")
+qmd.fl <- qmd.fl[length(qmd.fl)]
+wordcount <- wordcountaddin::word_count(filename = qmd.fl)
+
+```
+
+Word count `r wordcount`
+
+```{r}
+#| echo: false
+#| eval: true
+#| label: session_prep
+#| warning: false
+#| message: false
+
+library(dplyr)
+library(gtsummary)
+library(ggplot2)
+library(ggpubr)
+library(patchwork)
+library(tidyr)
+library(stringr)
+library(RColorBrewer)
+library(infer)
+library(ggh4x)
+
+## PRESETS ####
+shape <- 20
+hai_shape <- 15
+alpha <-  0.4
+pd <- position_dodge(0.6)
+basesize <- 10
+
+
+## ggplot functions ####
+scale_y_nAb_ds10 <- function(no=5,weak=10,compl=80000,y_lab = bquote('\nVirus Neutralisation,'~IC[50]~''),...) {
+  scale_y_continuous(trans='log2',
+                     breaks=c(no, weak, 64, 256, 1024, 4096, 16384, compl),
+                     labels=c(" ", "[<40]", "64", "", "1024", "", "16000", "[>80000]"),
+                     minor_breaks=c(24, 128, 512, 2048, 8192, 32768),
+                     name = y_lab,
+                     ...)
+  
+}
+
+
+scale_x_nAb_ds10 <- function(no=5,weak=10,compl=80000,x_lab = bquote('\nVirus Neutralisation,'~IC[50]~''),...) {
+  scale_x_continuous(trans='log2',
+                     breaks=c(no, weak, 64, 256, 1024, 4096, 16384, compl),
+                     labels=c(" ", "[<40]", "64", "256", "1024", "4096", "16000", "[>80000]"),
+                     minor_breaks=c(24, 128, 512, 2048, 8192, 32768),
+                     name = x_lab,
+                     ...)
+  
+}
+
+```
+
+```{r}
+## load in dataset ####
+## See below for details of the public dataset [age and sex have been redacted]
+load(file = "../../inputs/AgeVAX_HAIvsHTS_flu_dataset.RData")
+
+## Strip "Flu" from the start of the virus names for cleaner plots ##
+## Swap 'VICTORIA' to 'Victoria' ##
+long_dat <- long_dat %>%
+  mutate(variant = str_remove(variant, "Flu")) %>%
+  mutate(variant = str_replace(variant, "VICTORIA", "Victoria"))
+
+
+## return a public dataset ####
+## Sex, and Age removed from the public dataset ##
+## NOTE: As the generation of table 1 will fail (needs Sex and Age), disable that chunk to render ##
+
+# long_dat %>% select(! c(Age, sex)) %>%
+# write.csv(.,
+#           file = "AgeVAX_HAIvsHTS_flu_dataset_PUBLIC.csv")
+
+public_dat <- long_dat %>% select(! c(Age, sex))
+
+  save(public_dat,
+     file = "AgeVAX_HAIvsHTS_flu_dataset_PUBLIC.RData")
+
+
+##----------##
+## LOAD THE PUBLIC DATA ##
+## If running the public dataset from github, load in with code below
+## [and comment out rest of this chunk]
+
+# load(file = "AgeVAX_HAIvsHTS_flu_dataset_PUBLIC.RData")
+# long_dat <- public_dat # rest of qmd expects long_dat object.
+##----------##
+
+
+```
+
+```{r}
+#| echo: false
+#| eval: true
+#| label: design_panel
+#| warning: false
+#| message: false
+
+## DESIGN PANEL ####
+design_tbl <- 
+  tribble(~visit, ~day, ~assay,
+          "d0", 0, "HAI",
+          "d7", 7, "HAI",
+          "d182", 182, "HAI",
+          "d0", 0, "LV-N",
+          "d7", 7, "LV-N",
+          "d182", 182, "LV-N") %>%
+  mutate(visit = factor(visit, levels = c("d0", "d7", "d182"))) %>%
+  mutate(assay = factor(assay)) %>%
+  mutate(assay = factor(assay, levels = rev(levels(assay))))
+
+
+panel_design <- design_tbl %>%
+  ggplot(aes(x = day, y = assay, shape = assay)) +
+  geom_point(size = 2) +
+  theme_bw(base_size = basesize) +
+  scale_shape_manual(values = c("HAI" = hai_shape, "LV-N" = shape),
+                     # the breaks argument controls order in legend #
+                     breaks= c("HAI","LV-N")) +
+  scale_x_continuous(breaks = c(0,7, 182),
+                     labels = c("d0", "d7", "d182"),
+                     limits = c(0-20, 182+20),
+                     name = NULL) +
+  geom_segment(aes(x = -10, xend = 192,
+                   y = 3, yend = 3),
+               arrow = arrow(type = "closed",
+                             length = unit(0.1, "inch")
+               )) +
+  geom_segment(aes(x = 0, xend = 0,
+                   y = 5, yend = 3.1),
+               arrow = arrow(type = "closed",
+                             length = unit(0.05, "inch")
+               )) +
+  geom_text(
+    inherit.aes = FALSE, 
+    aes(x=x, y=y),
+    data = data_frame(x = 7, y = 4),
+            hjust = 0,
+            label = "Adjuvanted QIV immunisation",
+            size = 8/ggplot2::.pt) +
+  theme(axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks = element_blank(),
+        panel.grid = element_blank(),
+        legend.text = element_text(size = 8),
+        legend.title = element_text(size = 8),
+        panel.border = element_blank())
+
+
+```
+
+```{r}
+#| echo: false
+#| eval: true
+#| label: table_1_prep
+#| warning: false
+#| message: false
+
+table1_dat <- long_dat %>%
+  rename(Sex = sex)
+
+```
+
+```{r}
+#| echo: false
+#| eval: true
+#| label: hai_plots
+#| warning: false
+#| message: false
+
+panel_hai <- long_dat %>%
+  mutate(hai_titre = as.numeric(hai_titre)) %>%
+    mutate(hai_titre = case_when(hai_titre == 0 ~ 2.5,
+                               TRUE ~ hai_titre)) %>%
+  ggplot(aes(x = visit, y = hai_titre,
+             group = StudyID,
+             col = variant)) + 
+    scale_y_continuous(trans = "log2",
+                     breaks = c(2.5, 16, 128, 1024),
+                     labels = c("<10","16", "128", "1024"),
+                     minor_breaks = c(32, 64, 256, 512),
+                     expand =c(0.05, 1.5),
+                    name = "HAI") +
+  geom_point(
+    shape = hai_shape,
+    alpha = alpha,
+    position = pd, show.legend = FALSE) +
+  scale_colour_brewer(palette = "Paired") +
+  # geom_violin(aes(group=NULL), fill = NA) +
+  # geom_line() +
+  facet_grid(.~variant) +
+  # stat_summary(
+  #   aes(group = NULL), col = "black", fun = "median",
+  #   shape = 5) +
+  #   stat_summary(
+  #   aes(group = NULL), col = "green", fun = function(z) { quantile(z,0.90) }, 
+  #   fun.max = NULL,
+  # fun.min = NULL,
+  #   shape = 5) +
+      stat_summary(
+    aes(group = NULL), col = "black", fun = function(z) { 2^mean(log2(z)) }, 
+    shape = 4) +
+  
+#  stat_compare_means(method = "wilcox",
+#                paired = TRUE,
+#                  data = . %>% group_by(StudyID) %>%
+#                   filter(n() == 12) %>%
+#                  ungroup() %>%
+#  mutate(hai_titre = 2^hai_titre),
+#                  comparisons = list(c(1,2),
+#                                     c(2,3),
+#                                     c(1,3)),
+#  tip.length = 0.01,
+#                  size = basesize/ggplot2::.pt) +
+  theme_bw(base_size = basesize) +
+  labs(x = NULL) +
+  theme(panel.grid.major.x = element_blank())
+
+
+## calculate stats ##
+panel_hai_p <- long_dat %>%
+  mutate(hai_titre = as.numeric(hai_titre)) %>%
+  mutate(hai_titre = case_when(hai_titre == 0 ~ 2.5,
+                               TRUE ~ hai_titre)) %>%
+  ## 4 viruses and 3 timepoints, so a complete case has 12 rows ##
+  ## use complete cases so can performed paired stats ##
+  group_by(StudyID) %>%
+  filter(n() == 12) %>%
+  ungroup() %>%
+  group_by(variant) %>%
+  rstatix::pairwise_wilcox_test(hai_titre ~ visit,
+                       p.adjust.method = "none", paired = TRUE)
+
+
+## ready stats to add to plot ##
+panel_hai_p <- panel_hai_p %>% 
+  ## round P values for plotting ##
+  mutate(p_label = case_when(
+    p.adj>=0.25 ~ format(round(p.adj, 1)),
+    p.adj>=0.05  & p.adj<0.25 ~ format(round(p.adj, 2)),
+                       p.adj>=0.001 & p.adj<0.05 ~ format(round(p.adj, 3)),
+                       p.adj<0.001 ~ format(signif(p.adj,digits=2),nsmall=2))) %>%
+  mutate(p_label = str_replace(p_label, pattern = "e", replacement = "×10<sup>")) %>%
+  mutate(p_label = str_replace(p_label, pattern = "-0", replacement = "-")) %>%
+  ## add x and y coordinates ##
+  rstatix::add_x_position() %>%
+  mutate(y.position = case_when(group1 == "d0" & group2 == "d7" ~ 10,
+                       group1 == "d7" & group2 == "d182" ~ 11,
+                       group1 == "d0" & group2 == "d182" ~ 13.5)
+  ) %>%
+  ## calculate middle of bracket ##
+  mutate(x = xmin+(xmax-xmin)/2)
+  
+## add bracket + P value ##
+panel_hai <- panel_hai + 
+  ## add an unlabelled bracket ##
+  ggpubr::geom_bracket(data = panel_hai_p, aes(col = NULL, label = p_label),
+                                 tip.length = 0.01,
+                                 label.size = 0, show.legend = FALSE) +
+  ## add a html parsing label ##
+  ggtext::geom_richtext(data = panel_hai_p, aes(label = p_label, x = x, y = 2^(y.position)), 
+                        inherit.aes = FALSE,
+                        nudge_y = 1,
+                        fill = NA, label.color = NA, # remove background and outline
+    label.padding = grid::unit(rep(0, 4), "pt"),
+    size = 8/ggplot2::.pt)
+
+```
+
+```{r}
+#| echo: false
+#| eval: true
+#| label: hts_plots
+#| warning: false
+#| message: false
+
+panel_HTS <- long_dat %>%
+  mutate(ic50 = as.numeric(ic50)) %>%
+  ggplot(aes(x = visit, y = ic50,
+             group = StudyID,
+             col = variant)) + 
+  geom_point(
+    shape = shape,
+    alpha = alpha,
+    position = pd, show.legend = FALSE) +
+  geom_violin(aes(group=NULL), fill = NA, show.legend = FALSE) +
+    scale_colour_brewer(palette = "Paired") +
+  scale_y_nAb_ds10(y_lab = "LV-N", expand = c(0.05, 2)) +
+  # geom_line() +
+  facet_grid(.~variant) +
+  stat_summary(aes(group = NULL), col = "black", fun = "median", shape = 5,
+               position = position_nudge(x = -0.1)) +
+  stat_summary(
+    aes(group = NULL), col = "black", fun = function(z) { 2^mean(log2(z)) }, 
+    shape = 4,
+    position = position_nudge(x = 0.1)) +
+  
+  # stat_compare_means(
+  #   method = "wilcox",
+  #   paired = TRUE,
+  #                data = . %>% group_by(StudyID) %>%
+  #                 filter(n() == 12) %>%
+  #                ungroup(),
+  #   comparisons = list(c(1,2),
+  #                      c(2,3),
+  #                      c(1,3)),
+  #   size = basesize/ggplot2::.pt) +
+  theme_bw(base_size = basesize) +
+  labs(x = NULL)  +
+  theme(panel.grid.major.x = element_blank())
+
+
+
+
+## calculate stats ##
+panel_hts_p <- long_dat %>%
+  mutate(ic50 = (as.numeric(ic50))) %>%
+  ## 4 viruses and 3 timepoints, so a complete case has 12 rows ##
+  ## use complete cases so can performed paired stats ##
+  group_by(StudyID) %>%
+  filter(n() == 12) %>%
+  ungroup() %>%
+  group_by(variant) %>%
+  rstatix::pairwise_wilcox_test(ic50 ~ visit,
+                       p.adjust.method = "none", paired = TRUE)
+
+
+## ready stats to add to plot ##
+panel_hts_p <- panel_hts_p %>% 
+  ## round P values for plotting ##
+  mutate(p_label = case_when(
+    p.adj>=0.25 ~ format(round(p.adj, 1)),
+    p.adj>=0.05  & p.adj<0.25 ~ format(round(p.adj, 2)),
+                       p.adj>=0.001 & p.adj<0.05 ~ format(round(p.adj, 3)),
+                       p.adj<0.001 ~ format(signif(p.adj,digits=2),nsmall=2))) %>%
+  mutate(p_label = str_replace(p_label, pattern = "e", replacement = "×10<sup>")) %>%
+  mutate(p_label = str_replace(p_label, pattern = "-0", replacement = "-")) %>%
+  ## add x and y coordinates ##
+  rstatix::add_x_position() %>%
+  mutate(y.position = case_when(group1 == "d0" & group2 == "d7" ~ 17,
+                       group1 == "d7" & group2 == "d182" ~ 18.5,
+                       group1 == "d0" & group2 == "d182" ~ 22)
+  ) %>%
+  ## calculate middle of bracket ##
+  mutate(x = xmin+(xmax-xmin)/2)
+  
+## add bracket + P value ##
+panel_HTS <- panel_HTS + 
+  ## add an unlabelled bracket ##
+  ggpubr::geom_bracket(data = panel_hts_p, aes(col = NULL, label = p_label),
+                                 tip.length = 0.01,
+                                 label.size = 0, show.legend = FALSE) +
+  ## add a html parsing label ##
+  ggtext::geom_richtext(data = panel_hts_p, aes(label = p_label, x = x, y = 2^(y.position)), 
+                        inherit.aes = FALSE,
+                        nudge_y = 1.75,
+                        fill = NA, label.color = NA, # remove background and outline
+    label.padding = grid::unit(rep(0, 4), "pt"),
+    size = 8/ggplot2::.pt)
+
+```
+
+```{r}
+#| echo: false
+#| eval: true
+#| label: waning_FC_calcs
+#| warning: false
+#| message: false
+
+## Calculate per person FC for each strain for either assay ##
+FC <- long_dat %>%
+  mutate(hai_titre = as.numeric(hai_titre)) %>%
+  mutate(ic50 = (as.numeric(ic50))) %>%
+  filter(visit != "d0") %>%
+  group_by(variant, StudyID) %>%
+  arrange(visit, .by_group = TRUE) %>%
+  mutate(hai_titre = case_when(hai_titre < 10 ~ 10,
+                               TRUE ~ hai_titre)) %>%
+  mutate(ic50 = case_when(ic50 < 40 ~ 40,
+                               TRUE ~ ic50)) %>%
+  summarise(FC_ic50 = log2(ic50[2] / ic50[1]),
+            FC_hai = log2(hai_titre[2] / hai_titre[1])) %>%
+  mutate(variant = factor(variant))
+
+
+##
+reps <- 1000 ## do 1000 reps for bootstrapped median FCs
+
+## Next, do bias corrected bootstrapped for for each variant with LV-N ##
+FC_ic50_point_est <- tibble(variant = levels(FC$variant))
+FC_ic50_ci_est <- tibble(variant = levels(FC$variant))
+
+for(i in 1:nlevels(FC$variant)) {
+  
+  FC_ic50_point_est$median[[i]] <- FC %>%
+  filter(variant == levels(variant)[i]) %>%
+  specify(response = FC_ic50) %>%
+    hypothesize(null = "paired independence") %>%
+  calculate(stat = "mean")
+}
+
+FC_ic50_point_est <- FC_ic50_point_est %>% unnest()
+
+for(i in 1:nlevels(FC$variant)) {
+  
+  set.seed(1000)
+  
+  tmp <- FC %>%
+  filter(variant == levels(variant)[i]) %>%
+  specify(response = FC_ic50) %>%
+    hypothesize(null = "paired independence") %>%
+    generate(reps = reps, type = "bootstrap") %>%
+  calculate(stat = "mean")
+    
+    FC_ic50_ci_est$ci[[i]] <- tmp %>%
+    get_ci(level = 0.95, point_estimate = FC_ic50_point_est$stat[i], type = "bias-corrected")
+    
+}
+
+FC_ic50_ci_est <- FC_ic50_ci_est %>% unnest()
+
+FC_ic50 <- left_join(FC_ic50_point_est, FC_ic50_ci_est)
+
+## Next, do bias corrected bootstrapped for for each variant with HAI ##
+FC_hai_point_est <- tibble(variant = levels(FC$variant))
+FC_hai_ci_est <- tibble(variant = levels(FC$variant))
+
+for(i in 1:nlevels(FC$variant)) {
+  
+  FC_hai_point_est$median[[i]] <- FC %>%
+  filter(variant == levels(variant)[i]) %>%
+  specify(response = FC_hai) %>%
+    hypothesize(null = "paired independence") %>%
+  calculate(stat = "mean", na.rm = TRUE)
+}
+
+FC_hai_point_est <- FC_hai_point_est %>% unnest()
+
+for(i in 1:nlevels(FC$variant)) {
+  
+  set.seed(100)
+  
+  FC_hai_ci_est$ci[[i]] <- FC %>%
+  filter(variant == levels(variant)[i]) %>%
+  specify(response = FC_hai) %>%
+    hypothesize(null = "paired independence") %>%
+    generate(reps = reps, type = "bootstrap") %>%
+  calculate(stat = "mean", na.rm = TRUE) %>%
+    get_ci(level = 0.95, point_estimate = FC_hai_point_est$stat[i], 
+           type = "bias-corrected")
+}
+
+FC_hai_ci_est <- FC_hai_ci_est %>% unnest()
+
+FC_hai <- left_join(FC_hai_point_est, FC_hai_ci_est)
+
+## anti-log ##
+FC_hai <- FC_hai %>% mutate(across(is.numeric, ~ 2^(.x))) %>% mutate(interval = "Wane [d182/d7]")
+FC_ic50 <- FC_ic50 %>% mutate(across(is.numeric, ~ 2^(.x))) %>% mutate(interval = "Wane [d182/d7]")
+
+
+
+
+# panel_FC <- bind_rows(FC_hai %>% mutate(assay = "HAI"), 
+#                       FC_ic50 %>% mutate(assay = "LV-N")) %>%
+#   mutate(assay = factor(assay, levels = c("LV-N", "HAI"))) %>%
+#   ggplot(aes( x = assay, y = stat, ymin = lower_ci, ymax = upper_ci, col = variant, shape = assay)) +
+#   geom_hline(yintercept = 1, linetype = 3) +
+#   geom_pointrange(position = position_dodge(width = 0.1), show.legend = FALSE) +
+#   scale_colour_brewer(palette = "Paired") +
+#   scale_shape_manual(values = c(hai_shape, shape)) +
+#   
+# #  scale_x_continuous(name =  breaks = NULL, labels = NULL) +
+#   labs(y = "Geometric mean fold-change\n[95% CI]", x = NULL) +
+#   theme_bw(base_size = basesize) +
+#   
+#   coord_flip() + facet_grid(.~variant)
+
+
+```
+
+```{r}
+#| echo: false
+#| eval: true
+#| label: peak_FC_calcs
+#| warning: false
+#| message: false
+
+## Calculate per person FC for each strain for either assay ##
+FC_peak <- long_dat %>%
+  mutate(hai_titre = as.numeric(hai_titre)) %>%
+  mutate(ic50 = (as.numeric(ic50))) %>%
+  ## note here we want "PEAK" ##
+  filter(visit != "d182") %>%
+  group_by(variant, StudyID) %>%
+  arrange(visit, .by_group = TRUE) %>%
+  mutate(hai_titre = case_when(hai_titre < 10 ~ 10,
+                               TRUE ~ hai_titre)) %>%
+  mutate(ic50 = case_when(ic50 < 40 ~ 40,
+                               TRUE ~ ic50)) %>%
+  summarise(FC_ic50 = log2(ic50[2] / ic50[1]),
+            FC_hai = log2(hai_titre[2] / hai_titre[1])) %>%
+  mutate(variant = factor(variant))
+
+
+##
+reps <- 1000 ## do 100 reps for bootstrapped median FCs
+
+## Next, do bias corrected bootstrapped for for each variant with LV-N ##
+FC_peak_ic50_point_est <- tibble(variant = levels(FC_peak$variant))
+FC_peak_ic50_ci_est <- tibble(variant = levels(FC_peak$variant))
+
+for(i in 1:nlevels(FC$variant)) {
+  
+  FC_peak_ic50_point_est$median[[i]] <- FC_peak %>%
+  filter(variant == levels(variant)[i]) %>%
+  specify(response = FC_ic50) %>%
+    hypothesize(null = "paired independence") %>%
+  calculate(stat = "mean")
+}
+
+FC_peak_ic50_point_est <- FC_peak_ic50_point_est %>% unnest()
+
+for(i in 1:nlevels(FC_peak$variant)) {
+  
+  set.seed(1000)
+  
+  tmp <- FC_peak %>%
+  filter(variant == levels(variant)[i]) %>%
+  specify(response = FC_ic50) %>%
+    hypothesize(null = "paired independence") %>%
+    generate(reps = reps, type = "bootstrap") %>%
+  calculate(stat = "mean")
+    
+    FC_peak_ic50_ci_est$ci[[i]] <- tmp %>%
+    get_ci(level = 0.95, point_estimate = FC_peak_ic50_point_est$stat[i], type = "bias-corrected")
+    
+}
+
+FC_peak_ic50_ci_est <- FC_peak_ic50_ci_est %>% unnest()
+
+FC_peak_ic50 <- left_join(FC_peak_ic50_point_est, FC_peak_ic50_ci_est)
+
+## Next, do bias corrected bootstrapped for for each variant with HAI ##
+FC_peak_hai_point_est <- tibble(variant = levels(FC_peak$variant))
+FC_peak_hai_ci_est <- tibble(variant = levels(FC_peak$variant))
+
+for(i in 1:nlevels(FC$variant)) {
+  
+  FC_peak_hai_point_est$median[[i]] <- FC_peak %>%
+  filter(variant == levels(variant)[i]) %>%
+  specify(response = FC_hai) %>%
+    hypothesize(null = "paired independence") %>%
+  calculate(stat = "mean", na.rm = TRUE)
+}
+
+FC_peak_hai_point_est <- FC_peak_hai_point_est %>% unnest()
+
+for(i in 1:nlevels(FC_peak$variant)) {
+  
+  set.seed(100)
+  
+  FC_peak_hai_ci_est$ci[[i]] <- FC %>%
+  filter(variant == levels(variant)[i]) %>%
+  specify(response = FC_hai) %>%
+    hypothesize(null = "paired independence") %>%
+    generate(reps = reps, type = "bootstrap") %>%
+  calculate(stat = "mean", na.rm = TRUE) %>%
+    get_ci(level = 0.95, point_estimate = FC_peak_hai_point_est$stat[i], 
+           type = "bias-corrected")
+}
+
+FC_peak_hai_ci_est <- FC_peak_hai_ci_est %>% unnest()
+
+
+
+FC_peak_hai <- left_join(FC_peak_hai_point_est, FC_peak_hai_ci_est)
+
+## anti-log ##
+FC_peak_hai <- FC_peak_hai %>% mutate(across(is.numeric, ~ 2^(.x))) %>% mutate(interval = "Peak [d7/d0]")
+FC_peak_ic50 <- FC_peak_ic50 %>% mutate(across(is.numeric, ~ 2^(.x)))  %>% mutate(interval = "Peak [d7/d0]")
+
+
+```
+
+```{r}
+#| echo: false
+#| eval: true
+#| label: FC_panel
+#| warning: false
+#| message: false
+
+
+all_FCs <- bind_rows(FC_hai %>% mutate(assay = "HAI"), 
+                     FC_ic50 %>% mutate(assay = "LV-N"), 
+                     FC_peak_hai %>% mutate(assay = "HAI"), 
+                     FC_peak_ic50 %>% mutate(assay = "LV-N")
+                     )
+
+all_FCs_callout <- all_FCs %>% 
+  mutate(across(is.numeric, ~ round(.x, digits = 2))) %>%
+  mutate(text = paste0(stat, 
+                       " [", lower_ci,
+                       "-", upper_ci, "]"))
+
+
+
+# panel_FC_top <- all_FCs %>%
+#   filter(interval == "d7/d0") %>%
+#   mutate(assay = factor(assay, levels = c("LV-N", "HAI"))) %>%
+#   ggplot(aes( y = assay, x = stat, xmin = lower_ci, xmax = upper_ci, col = variant, shape = assay)) +
+#   geom_vline(xintercept = 1, linetype = 3) +
+#   geom_pointrange( show.legend = FALSE) +
+#   scale_colour_brewer(palette = "Paired") +
+#   scale_shape_manual(values = c(hai_shape, shape)) +
+# 
+# #  scale_x_continuous(name =  breaks = NULL, labels = NULL) +
+#   labs(x = NULL, y = NULL) +
+#   theme_bw(base_size = basesize) +
+#   facet_grid(interval~variant)
+# 
+# # panel_FC_top
+# 
+# panel_FC_bottom <- all_FCs %>%
+#   filter(interval == "d182/d7") %>%
+#   mutate(assay = factor(assay, levels = c("LV-N", "HAI"))) %>%
+#   ggplot(aes( y = assay, x = stat, xmin = lower_ci, xmax = upper_ci, col = variant, shape = assay)) +
+#   geom_vline(xintercept = 1, linetype = 3) +
+#   geom_pointrange( show.legend = FALSE) +
+#   scale_colour_brewer(palette = "Paired") +
+#   scale_shape_manual(values = c(hai_shape, shape)) +
+# 
+# #  scale_x_continuous(name =  breaks = NULL, labels = NULL) +
+#   labs(x = "Geometric mean fold-change\n[95% CI]", y = NULL) +
+#   theme_bw(base_size = basesize) +
+#   facet_grid(interval~variant)
+
+panel_FC <- all_FCs %>%
+  mutate(interval = factor(interval, levels = c("Peak [d7/d0]", "Wane [d182/d7]"))) %>%
+  mutate(assay = factor(assay, levels = c("LV-N", "HAI"))) %>%
+  ggplot(aes( x = variant, y = stat, ymin = lower_ci, ymax = upper_ci, col = variant, shape = assay)) +
+  geom_hline(yintercept = 1, linetype = 3) +
+  geom_pointrange( show.legend = FALSE, position = position_dodge(width = 0.2), fatten = 2) +
+  scale_colour_brewer(palette = "Paired") +
+  scale_shape_manual(values = c(hai_shape, shape)) +
+  scale_y_continuous(trans ="log2") +
+  #  scale_x_continuous(name =  breaks = NULL, labels = NULL) +
+  labs(x = NULL, y = "log<sub>2</sub>FC") +
+  theme_bw(base_size = basesize) +
+  facet_grid2(.~interval,
+              scales = "free", independent = "y", space = "free_x") +
+  guides(x = 
+           guide_axis_manual(n.dodge = 2)) +
+  theme(axis.title.y = ggtext::element_markdown())  +
+  theme(panel.grid.major.x = element_blank())
+
+# panel_FC_top / panel_FC_bottom
+
+```
+
+```{r}
+#| echo: false
+#| eval: true
+#| label: cor_panel
+#| warning: false
+#| message: false
+
+panel_cor <- long_dat %>%
+  mutate(ic50 = as.numeric(ic50)) %>%
+  mutate(hai_titre = as.numeric(hai_titre)) %>%
+   mutate(hai_titre = as.numeric(hai_titre)) %>%
+    mutate(hai_titre = case_when(hai_titre == 0 ~ 2.5,
+                               TRUE ~ hai_titre)) %>%
+  ggplot(aes(y = hai_titre, x = ic50,
+             col = variant)) + 
+    scale_y_continuous(trans = "log2",
+                     breaks = c(2.5,16, 128, 1024),
+                     labels = c("<10","16", "128", "1024"),
+                     minor_breaks = c(32, 64, 256, 512),
+                     expand = c(0.0, 1.05),
+                    name = "HAI") +
+  scale_x_nAb_ds10(x_lab = "LV-N") +
+  geom_point(
+    shape = shape,
+    alpha = alpha, show.legend = FALSE) +
+  geom_smooth(method = "lm", se = FALSE, show.legend = FALSE) + 
+  scale_colour_brewer(palette = "Paired") +
+  facet_grid(visit~variant) +
+  # stat_cor(method = "spearman", col = "black",
+  #          size = 8/ggplot2::.pt,
+  #          label.y.npc = 1,
+  #          label.x.npc = "left",
+  #          label.sep = " "
+  #          )  +
+  theme_bw(base_size = basesize) +
+  theme(
+    panel.grid.minor = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1))
+# panel_cor
+
+cor_dat <- panel_cor$data %>%
+  group_by(visit, variant) %>%
+  rstatix::cor_test(ic50, hai_titre, method = "spearman") %>%
+  mutate(p.adj = p) %>%
+  ## round P values for plotting ##
+  mutate(p_label = case_when(
+    p.adj>=0.25 ~ format(round(p.adj, 1)),
+    p.adj>=0.05  & p.adj<0.25 ~ format(round(p.adj, 2)),
+    p.adj>=0.001 & p.adj<0.05 ~ format(round(p.adj, 3)),
+    p.adj<0.001 ~ format(signif(p.adj,digits=2),nsmall=2))) %>%
+  mutate(p_label = str_replace(p_label, pattern = "e", replacement = "×10<sup>")) %>%
+  mutate(p_label = str_replace(p_label, pattern = "-0", replacement = "-")) %>%
+  ## combine to a single label ##
+  mutate(label_a = paste0("R=", cor)) %>%
+  mutate(label_b = paste0("p=", p_label)) %>%
+  ## plot with emdash to make the negative sign clear ##
+  mutate(label_a = str_replace(label_a, "-", "–")) %>%
+  
+    mutate( x_a = 32000,
+          y_a = 2.5) %>%
+  mutate( x_b = 30,
+          y_b = 256)
+
+
+panel_cor <- panel_cor +
+  ggtext::geom_richtext( data= cor_dat,
+             aes(label = label_a, x = x_a, y = y_a),
+             col = "black",
+             fill = NA, label.color = NA, # remove background and outline
+             label.padding = grid::unit(rep(0, 4), "pt"),
+             size = 8/ggplot2::.pt) +
+    ggtext::geom_richtext( data= cor_dat,
+             aes(label = label_b, x = x_b, y = y_b),
+             col = "black",
+             fill = NA, label.color = NA, # remove background and outline
+             label.padding = grid::unit(rep(0, 4), "pt"),
+             size = 8/ggplot2::.pt)
+
+panel_cor_rho <- cor_dat %>%
+  ggplot(aes(x=variant, y=visit, fill=cor)) + geom_tile() + scale_fill_viridis_c(limits = c(0, 1)) +
+  geom_text(aes(label = round(cor, 2)), size = 2)
+
+panel_cor_p <- cor_dat %>%
+  ggplot(aes(x=variant, y=visit, fill=-log10(p))) + geom_tile() + 
+  scale_fill_viridis_c(limits = c(0, 20), option = "magma") +
+  geom_text(aes(label = signif(p, 2)), size = 2, col = "white")
+
+
+```
+
+```{r}
+#| echo: false
+#| eval: true
+#| label: Q1_4_panel
+#| warning: false
+#| message: false
+
+
+
+## these plots are not included in the figure
+## but are used as callouts in the text.
+
+panel_Q1_4 <- long_dat %>%
+  mutate(ic50 = as.numeric(ic50)) %>%
+  mutate(hai_titre = as.numeric(hai_titre)) %>%
+  mutate(hai_titre = case_when(hai_titre == 0 ~ 2.5,
+                               TRUE ~ hai_titre)) %>%
+  ## select d0, H1/pdm, and HAI titre == 20 ##
+  filter(visit == "d0") %>%
+  filter(str_detect(variant, "pdm")) %>%
+  filter(hai_titre == 20) %>%
+  # arrange, and make row numbers #
+  arrange(ic50) %>%
+  mutate(row_n = row_number()) %>%
+  # label Q1, Q2-3, Q4 #
+  mutate(grp = case_when(
+    ic50 <= quantile(ic50, probs = c(1/4)) ~"Q1",
+    ic50 >= quantile(ic50, probs = c(3/4)) ~"Q4",
+    T ~ "Q2 & 3")) %>%
+  mutate(grp = factor(grp, levels = c("Q1", "Q2 & 3", "Q4"))) %>%
+  # plot #
+  ggplot(aes(x=row_n, y = ic50, col = grp, fill = variant)) + 
+  geom_point(
+    shape = 21,
+    show.legend = FALSE) +
+  scale_y_nAb_ds10(y_lab = "LV-N",
+                   limits = c(5,80000)
+                   ) +
+    scale_color_manual(values = c("grey90", "grey70", "black") ) +
+  scale_x_continuous(breaks = c(1:19), minor_breaks = NULL,
+                     name = "d0 HAI titre = 40") +
+  scale_fill_manual(values = "#1F78B4") + 
+  geom_vline(xintercept = 5.5, linetype = 3) + 
+  geom_vline(xintercept = 14.5, linetype = 3) + 
+  geom_text(data = tribble(~row_n, ~ic50, ~label,
+                           3, 10,"Q1",
+                           10, 10,"Q2 & 3",
+                           17, 10,"Q4"),
+            aes(label = label, x = row_n, y = ic50),
+            hjust = 0.5,
+            size = 8/ggplot2::.pt,
+            inherit.aes = FALSE) +
+  ggrepel::geom_text_repel(aes(label = ic50), col = "black",
+                           size = 8/ggplot2::.pt,
+                           ylim = c(log2(256), log2(80000)),
+                           data = . %>% 
+                             filter(row_n %in% c(1,5, 15, 19)) %>%
+                             mutate(ic50 = round(ic50, digits = 0))
+                             ) +
+  theme_bw(base_size = basesize) +
+  facet_grid(.~variant) +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        panel.grid.major.y = element_blank())
+#-------------
+## Plot HAI trajectories by these quartile groups ##
+panel_Q1_4_HAI <- long_dat %>%
+  mutate(ic50 = as.numeric(ic50)) %>%
+  mutate(hai_titre = as.numeric(hai_titre)) %>%
+  mutate(hai_titre = case_when(hai_titre == 0 ~ 2.5,
+                               TRUE ~ hai_titre)) %>%
+  left_join(panel_Q1_4$data %>% select(StudyID, grp)) %>%
+  filter(!is.na(grp)) %>%
+  # show just pdm #
+  filter(str_detect(variant, "pdm")) %>%
+  ggplot(aes(x = visit, y = hai_titre,
+             group = StudyID,
+             col = grp,
+             fill = variant)) + 
+  geom_point(
+    shape = 22,
+    position = pd) +
+  # hai scale, as earlier #
+  scale_y_continuous(trans = "log2",
+                     breaks = c(2.5,16, 128, 1024),
+                     labels = c("<10","16", "128", "1024"),
+                     minor_breaks = c(32, 64, 256, 512),
+                     expand = c(0.0, 1.05),
+                     name = "HAI") +
+    scale_color_manual(values = c("grey90", "grey70", "black") ) +
+  scale_fill_manual(values = "#1F78B4") + 
+  
+  facet_grid(grp~.) +
+  # stat_summary(aes(group = NULL), col = "black", fun = "median", shape = 5,
+  #              position = position_nudge(x = -0.1)) +
+  stat_summary(
+    aes(group = NULL), col = "black", fun = function(z) { 2^mean(log2(z)) }, 
+    shape = 4,
+    position = position_nudge(x = 0)) +
+  theme_bw(base_size = basesize) +
+  labs(x = NULL) +
+  theme(legend.position = "none",
+        # strip.background = element_blank(),
+        # strip.text = element_blank(),
+        panel.grid.major.x = element_blank())
+
+## calculate stats ##
+panel_Q1_4_hai_p <- panel_Q1_4_HAI$data %>%
+  ## 1 viruses and 3 timepoints, so a complete case has 3 rows ##
+  ## use complete cases so can performed paired stats ##
+  group_by(StudyID) %>%
+  filter(n() == 3) %>%
+  ungroup() %>%
+  arrange(StudyID) %>%
+  group_by(variant, grp) %>%
+  rstatix::pairwise_wilcox_test(hai_titre ~ visit,
+                                p.adjust.method = "none", paired = TRUE)
+
+
+
+## ready stats to add to plot ##
+panel_Q1_4_hai_p <- panel_Q1_4_hai_p %>% 
+  ## round P values for plotting ##
+  mutate(p_label = case_when(
+    p.adj>=0.25 ~ format(round(p.adj, 1)),
+    p.adj>=0.05  & p.adj<0.25 ~ format(round(p.adj, 2)),
+    p.adj>=0.001 & p.adj<0.05 ~ format(round(p.adj, 3)),
+    p.adj<0.001 ~ format(signif(p.adj,digits=2),nsmall=2))) %>%
+  mutate(p_label = str_replace(p_label, pattern = "e", replacement = "×10<sup>")) %>%
+  mutate(p_label = str_replace(p_label, pattern = "-0", replacement = "-")) %>%
+  ## add x and y coordinates ##
+  rstatix::add_x_position() %>%
+  mutate(y.position = case_when(group1 == "d0" & group2 == "d7" ~ 10,
+                                group1 == "d7" & group2 == "d182" ~ 11.5,
+                                group1 == "d0" & group2 == "d182" ~ 13)
+  ) %>%
+  ## calculate middle of bracket ##
+  mutate(x = xmin+(xmax-xmin)/2)
+
+## add bracket + P value ##
+panel_Q1_4_HAI <- panel_Q1_4_HAI + 
+  ## add an unlabelled bracket ##
+  ggpubr::geom_bracket(data = panel_Q1_4_hai_p, aes(col = NULL, label = p_label),
+                       tip.length = 0.01,
+                       label.size = 0, show.legend = FALSE) +
+  ## add a html parsing label ##
+  ggtext::geom_richtext(data = panel_Q1_4_hai_p, aes(label = p_label, x = x, y = 2^(y.position)), 
+                        inherit.aes = FALSE,
+                        nudge_y = 0.5,
+                        fill = NA, label.color = NA, # remove background and outline
+                        label.padding = grid::unit(rep(0, 4), "pt"),
+                        size = 8/ggplot2::.pt)
+
+#-------------
+# repeat for LV-N ##
+panel_Q1_4_HTS <- long_dat %>%
+  mutate(ic50 = as.numeric(ic50)) %>%
+  left_join(panel_Q1_4$data %>% select(StudyID, grp)) %>%
+  filter(!is.na(grp)) %>%
+  filter(str_detect(variant, "pdm")) %>%
+  ggplot(aes(x = visit, y = ic50,
+             group = StudyID,
+             col = grp, fill = variant)) + 
+  geom_point(
+    shape = 21,
+    position = pd) +
+  scale_y_nAb_ds10(y_lab = "LV-N", expand = c(0.05, 2)) +
+    scale_color_manual(values = c("grey90", "grey70", "black") ) +
+  scale_fill_manual(values = "#1F78B4") + 
+  facet_grid(grp~.) +
+  stat_summary(aes(group = NULL), col = "black", fun = "median", shape = 5,
+               position = position_nudge(x = 0)) +
+  # stat_summary(
+  #   aes(group = NULL), col = "black", fun = function(z) { 2^mean(log2(z)) }, 
+  #   shape = 4,
+  #   position = position_nudge(x = 0.1)) +
+theme_bw(base_size = basesize) +
+  labs(x = NULL) +
+  theme(legend.position = "none",
+        # strip.background = element_blank(),
+        # strip.text = element_blank(),
+        panel.grid.major.x = element_blank())
+
+
+## calculate stats ##
+panel_Q1_4_hts_p <- panel_Q1_4_HTS$data %>%
+  ## 1 viruses and 3 timepoints, so a complete case has 3 rows ##
+  ## use complete cases so can performed paired stats ##
+  group_by(StudyID) %>%
+  filter(n() == 3) %>%
+  ungroup() %>%
+  arrange(StudyID) %>%
+  group_by(variant, grp) %>%
+  rstatix::pairwise_wilcox_test(ic50 ~ visit,
+                                p.adjust.method = "none", paired = TRUE)
+
+
+## ready stats to add to plot ##
+panel_Q1_4_hts_p <- panel_Q1_4_hts_p %>% 
+  ## round P values for plotting ##
+  mutate(p_label = case_when(
+    p.adj>=0.25 ~ format(round(p.adj, 1)),
+    p.adj>=0.05  & p.adj<0.25 ~ format(round(p.adj, 2)),
+    p.adj>=0.001 & p.adj<0.05 ~ format(round(p.adj, 3)),
+    p.adj<0.001 ~ format(signif(p.adj,digits=2),nsmall=2))) %>%
+  mutate(p_label = str_replace(p_label, pattern = "e", replacement = "×10<sup>")) %>%
+  mutate(p_label = str_replace(p_label, pattern = "-0", replacement = "-")) %>%
+  ## add x and y coordinates ##
+  rstatix::add_x_position() %>%
+  mutate(y.position = case_when(group1 == "d0" & group2 == "d7" ~ 17,
+                                group1 == "d7" & group2 == "d182" ~ 18.5,
+                                group1 == "d0" & group2 == "d182" ~ 21.5)
+  ) %>%
+  ## calculate middle of bracket ##
+  mutate(x = xmin+(xmax-xmin)/2)
+
+## add bracket + P value ##
+panel_Q1_4_HTS <- panel_Q1_4_HTS + 
+  ## add an unlabelled bracket ##
+  ggpubr::geom_bracket(data = panel_Q1_4_hts_p, aes(col = NULL, label = p_label),
+                       tip.length = 0.01,
+                       label.size = 0, show.legend = FALSE) +
+  ## add a html parsing label ##
+  ggtext::geom_richtext(data = panel_Q1_4_hts_p, aes(label = p_label, x = x, y = 2^(y.position)), 
+                        inherit.aes = FALSE,
+                        nudge_y = 1,
+                        fill = NA, label.color = NA, # remove background and outline
+                        label.padding = grid::unit(rep(0, 4), "pt"),
+                        size = 8/ggplot2::.pt)
+
+
+
+
+
+
+```
+
+```{r}
+#| echo: false
+#| eval: true
+#| label: biological_insights_panel
+#| warning: false
+#| message: false
+
+panel_pre_inhib_LVN <- long_dat %>%
+  # filter(str_detect(variant, "Cam")) %>%
+  mutate(hai_titre = as.numeric(hai_titre)) %>%
+  mutate(ic50 = as.numeric(ic50)) %>%
+  mutate(hai_titre = case_when(hai_titre < 10 ~ 10,
+                               TRUE ~ hai_titre)) %>%
+  mutate(ic50 = case_when(ic50 < 40 ~ 40,
+                          TRUE ~ ic50)) %>%
+  
+  select(ic50, visit, variant, StudyID) %>%
+  # mutate(ic50 = log2(ic50)) %>%
+  pivot_wider(names_from = c( visit),
+              values_from = ic50,
+              id_cols = c(StudyID, variant)) %>%
+  mutate(MA = d182/d0) %>%
+  ggplot(aes(x = d0, y = MA, col = variant)) +
+  geom_point(shape = 20, alpha = 0.4) +
+  scale_y_continuous(trans = "log2", 
+                     name = "log<sub>2</sub>IC<sub>50</sub><br>d7/d0") +
+  scale_x_nAb_ds10(
+    x_lab = bquote(~log[2]~'Virus Neutralisation,'~IC[50]~' d0'))  +
+  geom_smooth(method = "lm", se = FALSE) +
+  # stat_cor(method = "spearman", col = "black") +
+  scale_colour_brewer(palette = "Paired") +
+  # ggpubr::stat_regline_equation(label.x.npc = "center") +
+  theme_bw(base_size = basesize) +
+  theme(legend.position = "none", panel.grid.minor = element_blank()) +
+  theme(axis.title.y = ggtext::element_markdown()) +
+  facet_grid(.~variant)
+
+panel_pre_inhib_LVN_p <- panel_pre_inhib_LVN$data %>%
+  group_by(variant) %>%
+  rstatix::cor_test(vars = d0,
+                      vars2 = MA,
+                      method = "spearman") %>%
+  mutate(p.adj = p) %>%
+  ## round P values for plotting ##
+  mutate(p_label = case_when(
+    p.adj>=0.25 ~ format(round(p.adj, 1)),
+    p.adj>=0.05  & p.adj<0.25 ~ format(round(p.adj, 2)),
+    p.adj>=0.001 & p.adj<0.05 ~ format(round(p.adj, 3)),
+    p.adj<0.001 ~ format(signif(p.adj,digits=2),nsmall=2))) %>%
+  mutate(p_label = str_replace(p_label, pattern = "e", replacement = "×10<sup>")) %>%
+  mutate(p_label = str_replace(p_label, pattern = "-0", replacement = "-")) %>%
+  ## combine to a single label ##
+  mutate(label = paste0("R=", cor, ", p=", p_label)) %>%
+  ## plot with emdash to make the negative sign clear ##
+  mutate(label = str_replace(label, "-", "–")) %>%
+  mutate( x= 4096,
+          y = 64)
+
+
+panel_pre_inhib_LVN <- panel_pre_inhib_LVN +
+  ggtext::geom_richtext( data= panel_pre_inhib_LVN_p,
+             aes(label = label, x = x, y = y),
+             col = "black",
+             fill = NA, label.color = NA, # remove background and outline
+             label.padding = grid::unit(rep(0, 4), "pt"),
+             size = 8/ggplot2::.pt)
+
+panel_pre_inhib_HAI <- long_dat %>%
+  # filter(str_detect(variant, "Cam")) %>%
+  mutate(hai_titre = as.numeric(hai_titre)) %>%
+  mutate(ic50 = as.numeric(ic50)) %>%
+  mutate(hai_titre = case_when(hai_titre < 10 ~ 10,
+                               TRUE ~ hai_titre)) %>%
+  mutate(ic50 = case_when(ic50 < 40 ~ 40,
+                          TRUE ~ ic50)) %>%
+  select(hai_titre, visit, variant, StudyID) %>%
+  
+  # mutate(ic50 = log2(ic50)) %>%
+  pivot_wider(names_from = c( visit),
+              values_from = hai_titre,
+              id_cols = c(StudyID, variant)) %>%
+  mutate(MA = d182/d0) %>%
+  ggplot(aes(x = d0, y = MA, col = variant)) +
+  geom_point(shape = 20, alpha = 0.4,
+             position = position_jitter(width = 0.1, height = 0.1)) +
+  scale_y_continuous(trans = "log2", name = bquote(~log[2]~ "HAI\nd7/d0")) +
+  scale_x_continuous(trans = "log2", name = bquote(~log[2]~ "HAI d0")) +
+  geom_smooth(method = "lm", se = FALSE) +
+  # stat_cor(method = "spearman", col = "black") +
+  scale_colour_brewer(palette = "Paired") +
+  # ggpubr::stat_regline_equation(label.x.npc = "center") +
+  theme_bw(base_size = basesize) + 
+  theme(legend.position = "none", panel.grid.minor = element_blank())+
+  facet_grid(.~variant)
+
+
+
+panel_pre_inhib_HAI_p <- panel_pre_inhib_HAI$data %>%
+  group_by(variant) %>%
+  mutate(d0 = log2(d0)) %>%
+  mutate(MA = log2(MA)) %>%
+  rstatix::cor_test(d0,
+                    MA,
+                    method = "spearman") %>%
+  mutate(p.adj = p) %>%
+  ## round P values for plotting ##
+  mutate(p_label = case_when(
+    p.adj>=0.25 ~ format(round(p.adj, 1)),
+    p.adj>=0.05  & p.adj<0.25 ~ format(round(p.adj, 2)),
+    p.adj>=0.001 & p.adj<0.05 ~ format(round(p.adj, 3)),
+    p.adj<0.001 ~ format(signif(p.adj,digits=2),nsmall=2))) %>%
+  mutate(p_label = str_replace(p_label, pattern = "e", replacement = "×10<sup>")) %>%
+  mutate(p_label = str_replace(p_label, pattern = "-0", replacement = "-")) %>%
+  ## combine to a single label ##
+  mutate(label = paste0("R=", cor, ", p=", p_label)) %>%
+  ## plot with emdash to make the negative sign clear ##
+  mutate(label = str_replace(label, "-", "–")) %>%
+  mutate( x= 128,
+          y = 16)
+
+
+panel_pre_inhib_HAI <- panel_pre_inhib_HAI +
+  ggtext::geom_richtext( data= panel_pre_inhib_HAI_p,
+                         aes(label = label, x = x, y = y),
+                         col = "black",
+                         fill = NA, label.color = NA, # remove background and outline
+                         label.padding = grid::unit(rep(0, 4), "pt"),
+                         size = 8/ggplot2::.pt)
+
+
+```
+
+{{< pagebreak >}}
+
+###### Abstract {.unnumbered .unlisted}
+
+Influenza remains a significant threat to human and animal health. Assessing serological protection against influenza has relied upon haemagglutinin inhibition assays, which are used to gauge existing immune landscapes, seasonal vaccine decisions and in systems vaccinology studies. Here, we adapt our high-throughput live virus microneutralisation assay for SARS-CoV-2, benchmark against haemagglutinin inhibition assays, and report serological vaccine responsiveness in a cohort of older (\>65yo) community dwelling adults (n=`r nlevels(factor(long_dat$StudyID))`), after the adjuvanted 2021-22 Northern Hemisphere quadrivalent vaccine. We performed both assays against all four viruses represented in the vaccine (`r paste(levels(factor(long_dat$variant)), sep=", ")`), using sera drawn on days 0 \[range: d-28 to d0\], 7 \[d6-10\] and 182 \[d161-196\] with respect to vaccination. We found population-level concordance between the two assays (Spearman's correlation coefficient range 0.48-0.88; all P≤1.4 x 10^-5^). The improved granularity of microneutralisation was better able to estimate fold-changes of responses, and quantify the inhibitory effect of pre-existing antibody. Our high-throughput method offers an alternative approach to assess influenza-specific serological responses with improved resolution.
+
+###### Introduction {.unnumbered .unlisted}
+
+Influenza causes an estimated 389,000 deaths a year [@paget2019]. Whilst annually updated multi-valent vaccines reduce this burden, better laboratory methods offering rapid, granular evaluation of the neutralising antibody response to these vaccines could further minimise this. Firstly, by facilitating refined yearly strain selection through high resolution quantification of the pre-existing antibody landscape. Secondly, by rapid, robust comparison between vaccine platforms, both existing (protein, adjuvanted protein, live-attenuated virus, or split virion), and upcoming (mRNA, and others). Thirdly, by providing a continuous response variable for systems vaccinology studies, to better leverage multi-modal high-dimensional and longitudinal datasets, themselves generated at significant cost and resource. Finally, by allowing prompt re-evaluation of human population immunity when an antigenically shifted influenza virus emerges, such as H5N1.
+
+Currently, the haemagglutinin inhibition (HAI) assay is used to evaluate existing population-level immunity to guide annual vaccine strain selection, to confirm immunogenicity of these updated preparations, and as a correlate of protection. HAI assays are largely unchanged since first described in the 1940s [@salk1944; @hirst1942]: they are scalable, require minimal specialist laboratory equipment, but do not directly measure neutralising antibody, a critical effector arm of immunity. Virus will agglutinate red blood cells, naturally decorated with sialic acid, the ligand for influenza's HA. Agglutination is inhibited by sera containing HA-specific antibodies. Live-virus neutralisation assays for influenza have existed for decades [@bachmann1999], but have to-date not been capable of displacing the HAI assay, largely due to limitations in the number of sera processed and their relative complexity.
+
+###### Results and Discussion {.unnumbered .unlisted}
+
+Here, we perform a head-to-head comparison of paired HAI, and a newly developed high-throughput live-virus microneutralisation (LV-N) assay. We demonstrate that large scale microneutralisation assays (see Materials and Methods) of 4 influenza strains are both feasible, and offer enhanced resolution. Adapting our SARS-CoV-2 approach, retains a similar throughput of \~1,000-1,500 sera for 3 strains per week. We report sera from the AgeVAX study, an observational study of influenza vaccine responses in `r nlevels(factor(long_dat$StudyID))` community dwelling older adults (\>65yo), with venepuncture on days 0 \[range: d-28 to d0\], 7 \[d6-10\] and 182 \[d161-196\] post-vaccination ([**Table 1, Fig 1A**]{.underline}).
+
+We first confirm increased antibody titres for all 4 influenza strains at d7 after administration of the 2021-22 vaccine using HAI (d7 vs d0 Wilcoxon *P*\<`r panel_hai_p %>% filter(group1 == "d0" & group2 == "d7") %>% pull(p) %>% max(.) %>% round(., digits = 3)` for all strains, [**Fig 1B**]{.underline}). Between paired sera, we find waning from d7 to d182 for two of the four immunised strains (`r panel_hai_p %>% filter(group1 == "d7" &  group2 == "d182") %>%  mutate(p_label = str_replace(p_label, "<sup>", "^")) %>%    mutate(p_label = case_when(    str_detect(p_label, pattern = "\\^") ~ paste0(p_label, "^"),     !is.na(p_label) ~ p_label)) %>% mutate(callout = paste0(variant, " _P_=", p_label)) %>% pull(callout) %>% paste(collapse = "; ")`, [**Fig 1B**]{.underline}). We next repeated this immunogenicity assessment using our newly developed LV-N assay ([**Fig 1C**]{.underline}). The boosting effect of vaccination is, once again, clear (d7 vs d0 *P*\<`r panel_hts_p %>% filter(group1 == "d0" & group2 == "d7") %>% pull(p) %>% max(.) %>%   round(., digits = 4) %>%   str_replace(., pattern = "e-0", replacement = "×10^-")` for all strains, [**Fig 1C**]{.underline}). With the LV-N assay, three of the four immunised strains showed significant waning between d7 and d182 `r panel_hts_p %>% filter(group1 == "d7" &  group2 == "d182") %>%  mutate(p_label = str_replace(p_label, "<sup>", "^")) %>%    mutate(p_label = case_when(    str_detect(p_label, pattern = "\\^") ~ paste0(p_label, "^"),     !is.na(p_label) ~ p_label)) %>% mutate(callout = paste0(variant, " _P_=", p_label)) %>% pull(callout) %>% paste(collapse = "; ")`. The quantitative nature of the LV-N assays offers improved resolution of the fold-change of the acute response (in the AgeVax study, the fold-change in titres d7/d0), with geometric mean fold-changes \[95% confidence intervals\] for LV-N estimating smaller reductions boosts with less uncertainty between these visits, when compared with HAI ([**Fig 1D**]{.underline}). Furthermore, the waning (d182/d7) of B/Yamagata reached statistical significance only within the LV-N dataset ([**Figs 1B & 1C**]{.underline}).
+
+Thirdly, we plotted pairwise comparisons between HAI and LV-N for each strain at each of the three venepuncture visits ([**Fig 2A**]{.underline}). Overall, the two assays showed a strong positive correlation according to their Spearman's correlation coefficients. Considering differences between strains, B/Yamagata showed relatively weaker correlations than the other 3 strains. Next, considering differences over the 3 timepoints, the between-assay correlation for B/Victoria was weakest at d182, but no other strains showed marked differences over time.
+
+Despite the high concordance between assays at a population-level, we noted that for a given HAI titre, the range of corresponding LV-N results was large: for example, an HAI titre of 20 at baseline (d0) corresponded to an LV-N range of `r panel_Q1_4$data %>% pull(ic50) %>% min(.) %>% round(.,digits = 0)`-`r panel_Q1_4$data %>% pull(ic50) %>% max(.) %>% round(.,digits = 0)` for influenza A/H1. This `r (panel_Q1_4$data %>% pull(ic50) %>% max(.) %>% round(.,digits = 0) / ( panel_Q1_4$data %>% pull(ic50) %>% min(.) %>% round(.,digits = 0) ) ) %>% round(., digits = 0)`-fold difference suggests that immunologically important differences in vaccine responses are aggregrated into discrete HAI values. To address the question of whether LV-N offered improved sensitivity for biologically relevant heterogeneity over HAI, we returned to the observation that pre-existing antibody limits the fold-induction of antibody after vaccination [@tsang2014]. Using HAI, we found that we could observe this negative relationship between higher baseline titres and lower fold-changes (d7/d0) for only FluA/H1pdm (P=`r panel_pre_inhib_HAI_p %>% filter(p.adj < 0.05) %>% pull(p_label)`), with the other strains showing non-significant trends ([**Fig 3A**]{.underline}). Repeating this comparison with LV-N, we found moderately strong negative correlations between pre-existing neutralising antibody and peak fold-change (d7/d0) for all variants (all P\<`r panel_pre_inhib_LVN_p %>% filter(p.adj < 0.05) %>% arrange(p.adj) %>% slice_tail() %>% pull(p_label)`, [**Fig 3B**]{.underline}). Coupling longitudinal LV-N-derived serological data with multi-modal datasets promises to unlock new potentials in systems vaccination, examining both peak and waned responses.
+
+There are some limitations to our study. This single centre study enrolled older healthy adults, likely to mount a memory response, recalling both previously haemagglutinin-experienced B cells and recruiting naive B cells. It is plausible that a primary influenza vaccine response might be alternatively performant between these assays, particularly if significant IgM is produced, likely to perform well at HAI. Additionally, our live-virus microneutralisation approach reflects serological neutralisation of both HA and neuraminidase, whereas HAI does not assay NA-directed neutralisation. Other implementations of microneutralisation assays use alternative readouts for infection: for example, the WHO protocol uses an ELISA for nucleoprotein on fixed MDCK cells (reporting the lowest dilution at which the OD405 is below the midpoint of OD405 of virus-only and cell-only controls) [@worldhealthorganization2010], and a recently described next-generation sequencing assay testing infectivity/neutralisation of many DNA-barcoded viruses in parallel [@loes2024]. Whilst, we have not directly compared with these methods, the DNA-barcoding approach can only find HA-related neutralisation, and the WHO neutralisation assay reports discrete rather than continuous data.
+
+In summary, we have shown that high-throughput live-virus microneutralisation assays are non-inferior to HAI with strong correlations at population-levels. Further, we find that the continuous titre values returned by LV-N allow for finer dissection of vaccine responses, that are obfuscated by HAI. High-throughput influenza LV-N therefore has the potential to be a catalyst for rapid, robust assessment of existing antibody landscapes, new vaccine strain formulations, a step-change in systems vaccinology, and a facet of laboratory-based pandemic preparedness.
+
+###### Materials and Methods {.unnumbered .unlisted}
+
+**Study design, serum collection and ethics**
+
+The immune responses to vaccines in older persons study (AgeVax) enrolled community dwelling older adults already enrolled within the NIHR Cambridge BioResource to assess their response to seasonal influenza vaccine. AgeVax was approved by the Yorkshire & The Humber - South Yorkshire Research Ethics Committee (IRAS 277259, REC 20/YH/0101), and sponsored by the Babraham Institute, Cambridge. Healthy participants were enrolled if they were planning to receive the seasonal influenza vaccine as part of their routine care (in the UK, influenza vaccine is offered to all \>65yo), were able to attend for consenting and venepuncture, and carried at least 1 allele of *HLADR\*0701, HLADR\*0401* or *HLADR\*1101* (determined by single nucleotide polymorphism typing using the UK Biobank v2.1 Axiom array). Controlled comorbidities such as hypertension or hypercholesterolaemia were not exclusion criteria. Concomitant medications and comorbidities are not available for research purposes.
+
+Venepuncture was performed up to 28 days pre-vaccination and on days 6-10, and 161-196 post vaccination. All participants received the adjuvanted quadrivalent influenza vaccine (Seqirus UK Ltd) via intramuscular injection. Blood was collected into silica-coated serum tubes and centrifuged at 2000rpm for 5 minutes and stored in aliquots at -80C. These sera were provided to the Francis Crick Institute for influenza assays described below.
+
+**Cells and viruses**
+
+MDCK cells expressing the SIAT1 gene (MDCK-SIAT1) were maintained under selection in DMEM containing 1mg/ml Geneticin (G418) Sulphate (Stratech Scientific APE2513) and 1% Penicillin/Streptomycin (Sigma-Aldrich). Cells were seeded in DMEM containing 1% Penicillin/Streptomycin into 384-well cell culture microplates (Griener Bio-One Ltd) 18-20 hours prior to use in live-virus microneutralisation assays.
+
+All influenza virus isolates used in this study were propagated in the allantoic cavity of 10-day-old embryonated hens' eggs at 35°C for 48 hours.
+
+**Hemagglutinin inhibition assays for influenza**
+
+Haemagglutination and haemagglutinin inhibition (HAI) assays were performed according to standard methods using suspensions of guinea pig RBCs (1.0% v/v) for A(H3N2) viruses and turkey RBCs (0.75% v/v) for A(H1N1)pdm09 and type B viruses with all serum samples pre-treated with receptor-destroying enzyme (RDE) from Vibrio cholera [@worldhealthorganization2011]. Four haemagglutination units were used in all HAI assays. For A(H3N2) viruses, haemagglutination and HAI assays were conducted in the presence of 20 nM oseltamivir carboxylate [@lin2010].
+
+**Live-virus microneutralisation assays for influenza**
+
+To perform high-throughput live virus microneutralisation assays for influenza we adapted our existing approach for SARS-CoV-2 neutralisation [@wall2021a; @carr2023b; @shawe-taylor2024]. MDCK-SIAT1 cells at 80% confluency were infected with selected influenza isolates in 384-well format, in the presence of 10-fold serial dilutions of participant serum samples, diluted in DMEM containing 1% Penicillin/Streptomycin. After 24 hours incubation at 37°C, cells were fixed using 4% formaldehyde (v/v), permeabilised with 0.2% TritonX-100 with 3% BSA in PBS (v/v), and stained for Influenza nucleoprotein (NP) using Biotin-labelled-clone-2-8C antibody produced in-house in conjunction with an Alexa488-Streptavidin (Invitrogen S32354) for influenza A isolates, or the mouse monoclonal B017 (Abcam, ab20711) in conjunction with an Alexa488 conjugated Goat anti-Mouse secondary (ThermoFisher, A21141) for influenza B isolates. Cellular DNA was stained using DAPI. Whole-well imaging at 5x magnification was carried out using an Opera Phenix (Perkin Elmer) and fluorescent areas calculated using the Phenix-associated software Harmony (Perkin Elmer). Virus inhibition by patient serum samples was estimated from the measured area of infected cells/total area occupied by all cells in each well and then expressed as percentage of maximal (virus only control wells). Infected cells were identified by presence of Influenza NP staining. The inhibitory profile of each serum sample was estimated by fitting a 4-parameter dose response curve executed in SciPy. Neutralising antibody titres are reported as the fold-dilution of serum required to inhibit 50% of viral replication (IC~50~), and are further annotated if they lie above the quantitative range (\>40,000), below the quantitative range (\<40) but still within the qualitative range (i.e. partial inhibition is observed but a dose-response curve cannot be fitted because it does not sufficiently span the IC~50~), or if they show no inhibition at all.
+
+Viral isolates used in this study: A/Cambodia/e0826360/2020 H3N2, IVR-215 (A/Victoria/2570/2019) H1pdm, B/Phuket/3073/2013, B/Washington/02/2019.
+
+**Data curation and analyses**
+
+HAI and live-virus microneutralisation titres were associated with anonymized metadata using R (v 4.2.2) and *tidyverse* (v 1.3.2) [@wickham2019]. Plots were generated using *ggplot2* (v 3.4.2), with *stat_summary()* to add geometric means or medians, as indicated in the figure legends. To plot HAI titres, sera with no inhibition were re-coded as 2.5. To plot LV-N titres, sera with either no inhibition of viral entry, or qualitative inhibition below the quantitative range (40-40,000), or inhibition greater than the quantitative range were re-coded as 5, 10 or 80,000 respectively. HAI and LV-N results were compared using two-tailed paired Wilcoxon tests, as implemented in the *rstatix* package, and resulting P values were plotted *ggpubr::geom_bracket()* and *ggtext::geom_richtext()*. Bias corrected 95% confidence intervals for fold-changes in HAI and LV-N were calculated from 1000 bootstraps generated with the *infer* package [@couch2021]. For correlation between HAI and LV-N, Spearman's correlation was used without censoring data above or below the quantitative ranges of HAI or LV-N. Anonymised data and R code are freely available via github:<https://github.com/EdjCarr/AgeVax_HAI_LVN>
+
+###### Acknowledgements {.unnumbered .unlisted}
+
+The NIHR Cambridge Biomedical Research Center (BRC) is a partnership between Cambridge University Hospitals NHS Foundation Trust and the University of Cambridge, funded by the National Institute for Health Research (NIHR). We thank all NIHR Cambridge BRC volunteers for their participation and thank the NIHR Cambridge BRC staff for their contribution in coordinating the vaccinations and venepuncture. We would like to thank Marna Roos, Gita Mistry, Nicola Bex, Natasha Bowyer Irvine at the Francis Crick Institute and Heather Bath at the Babraham Institute. MAL is a Lister Institute Prize Fellow. EJC is supported by a Medical Research Council Clinician Scientist Fellowship (MR/X006751/1). This work was supported by the NIHR Cambridge BRC, the Dunhill Medical Trust (RPGF1910/223 to MAL), the Biotechnology and Biological Sciences Research Council (BBS/E/B/000C0427, BBS/E/B/000C0428, and the Campus Capability Core Grant to the Babraham Institute), the Medical Research Council (MR/X006751/1 to EJC), a UKRI Frontier award (EP/X022382/1 to MAL), in part funded by the NIH Centres of Excellence in Influenza Research and Response program Penn-CEIRR contract (75N93021C00015), and by the Francis Crick Institute which receives its core funding from Cancer Research UK (CC1114, CC2230, CC0102), the UK Medical Research Council (CC1114, CC2230, CC0102), and the Wellcome Trust (CC1114, CC2230, CC0102). The co-first and co-last authors contributed equally and are at liberty to list these authorships in any order on their curriculum vitae.
+
+**Author contributions**
+
+LA: Conceptualization, Methodology, Investigation
+
+PSL: Conceptualization, Methodology, Investigation
+
+JLL: Project administration, Methodology, Investigation
+
+JB: Methodology, Investigation
+
+GD: Methodology, Investigation
+
+AH: Methodology, Investigation
+
+CR: Resources
+
+AB: Resources
+
+CC: Resources
+
+SI: Methodology, Investigation
+
+LMCW: Methodology, Investigation
+
+CS: Resources
+
+PB: Resources
+
+NL: Resources, Supervision
+
+NO'R: Resources, Supervision
+
+SK: Resources, Supervision
+
+MAL: Conceptualization, Funding acquisition, Supervision, Writing -- review & editing
+
+RH: Conceptualization, Funding acquisition, Investigation, Supervision, Writing -- review & editing
+
+MYW: Conceptualization, Funding acquisition, Investigation , Supervision, Writing -- review & editing
+
+EJC: Conceptualization, Data Curation, Formal Analysis, Visualisation, Writing -- original draft, , Writing -- review & editing
+
+**Role of the funding source**
+
+The funders of the study had no role in study design, data collection, data analysis, data interpretation, or writing of the report. The corresponding authors had full access to all the data and the final responsibility to submit for publication.
+
+**Declaration of interests**
+
+All authors declare no competing interests.
+
+###### References {.unnumbered .unlisted}
+
+::: {#refs}
+:::
+
+{{< pagebreak >}}
+
+```{r}
+#| echo: false
+#| eval: true
+#| label: figure_1_render
+#| warning: false
+#| fig-cap: !expr 'paste("**Fig 1. Serological vaccination responses quantified by haemagglutinin inhibition and high-throughput live influenza neutralisation assays in the AgeVax study**",
+#| paste0("**(A)** AgeVax study design ", nlevels(factor(long_dat$StudyID)), " individuals >65yo were vaccinated with adjuvanted quadrivalent influenza vaccine in the 2021-22 Northern Hemisphere season."),
+#| "**(B & C)** Haemagglutinin inhibition assay titres (HAI, **B**) or live-virus microneutralisation assay titres (LV-N, **C**), expressed as the reciprocal of the dilution at which 50% of virus infection is inhibited (IC~50~), at baseline (d0), and days 7 and 182 after vaccination (d7 & d182, respectively) for the flu viruses listed.",
+#| "**(D)** Log~2~ fold changes for peak (d7/d0) and wane (d182/d7) response as measured by HAI or LV-N (plotted as squares or circles respectively). Bootstrapped 95% confidence intervals are shown.",
+#| "In (B & C), crosses indicate geometric means, and _P_ values from 2-tailed paired Wilcoxon signed rank tests are shown. In (C), diamonds indicate medians.",
+#| sep=" ")'
+#| fig-scap: 'The plot'
+#| fig-env: mdframed
+
+lay1 <- "
+AAAA
+BBBB
+BBBB
+CCCC
+CCCC
+DDDD
+"
+
+wrap_elements(full = panel_design)  +
+  panel_hai + theme(axis.text.x = element_blank()) +
+  panel_HTS + theme(strip.text = element_blank(), 
+                    strip.background = element_blank()) +
+  panel_FC + 
+  plot_layout(design = lay1) + 
+  plot_annotation(tag_levels = list(c("A", "B", "C", "D"))) &
+  theme(plot.tag.position = c(0,0.95),
+        plot.tag = element_text(face = "bold", size = 14),
+        strip.background = element_blank(),
+        strip.text.y = element_text(angle = 0),
+        plot.margin = unit(c(1,0,0,1), "mm"))
+
+```
+
+{{< pagebreak >}}
+
+```{r}
+#| echo: false
+#| eval: true
+#| label: figure_2_render
+#| warning: false
+#| fig-cap: !expr 'paste("**Fig 2. Comparison of haemagglutinin inhibition and high-throughput live influenza neutralisation assays**",
+#| "**(A)** Correlation between HAI and LV-N for each flu virus tested, at each venepuncture.",
+#| "In (A), Spearman correlation coefficients and _P_ values are shown, and a fit line from linear regression plotted.",
+#| sep=" ")'
+#| fig-scap: 'The plot'
+#| fig-env: mdframed
+
+
+lay2 <- "
+AAAA
+"
+
+  panel_cor +
+  plot_layout(design = lay2) + 
+  plot_annotation(tag_levels = list(c("A"))) &
+  theme(plot.tag.position = c(0,0.95),
+        plot.tag = element_text(face = "bold", size = 14),
+        strip.background = element_blank(),
+        strip.text.y = element_text(angle = 0),
+        plot.margin = unit(c(1,0,0,1), "mm"))
+
+
+```
+
+{{< pagebreak >}}
+
+```{r}
+#| echo: false
+#| eval: true
+#| label: figure_3_render
+#| warning: false
+#| fig-cap: !expr 'paste("**Fig 3. Pre-existing antibody inhibits subsequent vaccine responses**",
+#| "**(A & B)** Log~2~ fold changes of peak titres (d7/d0) plotted against d0 titres for HAI (**A**) or LV-N (**B**).",
+#|  "In (A & B), Spearman correlation coefficients and _P_ values are shown, and a fit line from linear regression plotted.",
+#| sep=" ")'
+#| fig-scap: 'The plot'
+#| fig-env: mdframed
+
+lay3 <- "
+AAAA
+BBBB
+"
+
+  panel_pre_inhib_HAI +
+  panel_pre_inhib_LVN +
+  plot_layout(design = lay3) + 
+  plot_annotation(tag_levels = list(c("A", "B"))) &
+  theme(plot.tag.position = c(0,0.95),
+        plot.tag = element_text(face = "bold", size = 14),
+        strip.background = element_blank(),
+        strip.text.y = element_text(angle = 0),
+        plot.margin = unit(c(1,0,0,1), "mm"))
+
+
+```
+
+{{< pagebreak >}}
+
+###### Table 1 {.unnumbered .unlisted}
+
+```{r}
+#| echo: false
+#| eval: true
+#| label: table_1_render
+#| warning: false
+#| message: false
+
+table1_dat %>% 
+  group_by(StudyID) %>% 
+  slice_head() %>% 
+  ungroup() %>%
+  mutate(cols = "AgeVAX") %>%
+  
+  select(cols, Age, Sex) %>%
+  tbl_summary(by=cols,
+              missing= "ifany",
+              statistic = c(all_continuous() ~ "{median} [{p25}-{p75}]")
+  ) %>% 
+  as_gt(.)
+
+```
+
+```{r}
+#| echo: false
+#| eval: true
+#| label: sessionInfo
+#| warning: false
+#| message: false
+
+## Write sessionInfo() to a file ##
+## We want to store this information, but not within .docx ##
+
+## if we have retained a wordcount chunk [at start of this .qmd],
+## then, qmd.fl can be used as prefix to filename
+## else, use a less specific name
+if( exists("qmd.fl") ) {
+  sessionInfo_filename <- 
+    gsub(
+      qmd.fl,
+      pattern = ".qmd$",
+      replacement = "_Quarto_sessionInfo.txt") 
+} else {
+  sessionInfo_filename <- "Quarto_sessionInfo.txt" 
+  return(sessionInfo_filename)
+  }
+
+writeLines(
+  capture.output(sessionInfo()), 
+  sessionInfo_filename)
+
+```
